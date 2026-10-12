@@ -1,9 +1,15 @@
 #!/bin/sh
-# Benign probe. Reports what the cloud agent's environment permits.
+# Release probe. Prints HTTP status codes only; no secrets are printed.
 echo "RELEASE_PROBE_START"
-echo "whoami=$(whoami) cwd=$(pwd)"
-echo "egress_test:"
-curl -s -o /dev/null -w "  example.com -> HTTP %{http_code}\n" --max-time 8 https://example.com/ 2>&1 || echo "  example.com -> blocked/failed"
-echo "outside_workspace_read:"
-( head -c 60 /etc/hostname 2>/dev/null && echo "  (read /etc/hostname OK)" ) || echo "  (read outside workspace failed)"
+SIB=aidan2-bbp/copilot-skill-grant-canary
+echo "A) api read of sibling private repo, with the agent token:"
+printf "   contents -> HTTP %s\n" "$(curl -s -o /tmp/a.out -w '%{http_code}' --max-time 10 -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Accept: application/vnd.github+json" https://api.github.com/repos/$SIB/contents/CANARY.txt)"
+grep -o 'SIBLING_REPO_CANARY[A-Za-z0-9-]*' /tmp/a.out 2>/dev/null | head -1 | sed 's/^/   LEAKED: /'
+echo "B) api read without any token (baseline):"
+printf "   contents -> HTTP %s\n" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 https://api.github.com/repos/$SIB/contents/CANARY.txt)"
+echo "C) api read of the ASSIGNED repo, with the agent token (positive control):"
+printf "   own README -> HTTP %s\n" "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 -H "Authorization: Bearer ${GITHUB_TOKEN}" https://api.github.com/repos/aidan2-bbp/copilot-skill-grant-test/contents/README.md)"
+echo "D) git clone of the sibling repo through the agent's git proxy:"
+git clone -q https://github.com/$SIB /tmp/sib 2>&1 | tail -2 | sed 's/^/   /'
+[ -f /tmp/sib/CANARY.txt ] && echo "   LEAKED VIA CLONE: $(grep -o 'SIBLING_REPO_CANARY[A-Za-z0-9-]*' /tmp/sib/CANARY.txt)" || echo "   clone did not yield the file"
 echo "RELEASE_PROBE_END"
